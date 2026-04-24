@@ -33,7 +33,7 @@ export default async function handler(req, res) {
     const safeData = await safeRes.json();
     if (safeData.matches) {
       resultados.push("Phishing/Malware detectado (Google)");
-      score += 40;
+      score += 70;
     }
 
     // 🟡 VIRUSTOTAL
@@ -47,7 +47,7 @@ export default async function handler(req, res) {
     });
 
     resultados.push("Analizado por VirusTotal");
-    score += 10;
+    score += 20;
 
     // 🟡 WHOIS
     const whoisRes = await fetch(
@@ -138,12 +138,12 @@ export default async function handler(req, res) {
     // 💣 HEURÍSTICAS
     if (!url.startsWith("https")) {
       resultados.push("Sitio sin HTTPS");
-      score += 10;
+      score += 15;
     }
 
     if (/login|verify|secure|update/i.test(url)) {
       resultados.push("Patrón típico de phishing");
-      score += 15;
+      score += 25;
     }
 
     if (url.includes("@") || url.includes("-")) {
