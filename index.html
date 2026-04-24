@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>AI Security Scanner</title>
+
+<style>
+body {
+  background: #000;
+  color: #fff;
+  font-family: Arial;
+  text-align: center;
+  padding: 40px;
+}
+
+input {
+  width: 70%;
+  padding: 12px;
+  background: #111;
+  border: 1px solid #333;
+  color: white;
+}
+
+button {
+  padding: 12px 25px;
+  margin-top: 10px;
+  background: #222;
+  color: white;
+  border: 1px solid #555;
+  cursor: pointer;
+}
+
+#result { margin-top: 30px; }
+
+/* 🤖 BOTÓN FLOTANTE */
+#agentBtn {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 100;
+  background: #111;
+  border: 1px solid #444;
+  border-radius: 50%;
+  width: 75px;
+  height: 75px;
+  font-size: 36px;
+  cursor: pointer;
+  display: flex; /* 👈 importante */
+  align-items: center;
+  justify-content: center;
+}
+
+/* ⚠️ WARNING */
+#agentBtn.warning {
+  background: yellow;
+  color: black;
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+
+/* 💬 PANEL AGENTE */
+#agentPanel {
+  position: fixed;
+  bottom: 90px;
+  right: 20px;
+  z-index: 100;
+  width: 300px;
+  background: #111;
+  border: 1px solid #444;
+  padding: 15px;
+  display: none;
+  text-align: left;
+}
+
+footer {
+  position: fixed;
+  bottom: 20px;
+  width: 100%;
+  left: 0;
+  font-size: 12px;
+  color: #888;
+}
+</style>
+</head>
+
+<body>
+
+<h1>AI SECURITY SCANNER</h1>
+
+<input id="url" placeholder="Pegá el enlace sospechoso">
+<br>
+<button onclick="scan()">ESCANEAR</button>
+
+<div id="result"></div>
+
+<!-- 🤖 BOTÓN -->
+<div id="agentBtn" onclick="toggleAgent()">🤖</div>
+
+<!-- 💬 PANEL -->
+<div id="agentPanel">
+  <div id="agentText">Esperando análisis...</div>
+</div>
+
+<footer>
+  DESARROLLADO POR C DESIGN IA 2026 IA STUDIO GOOGLE.
+</footer>
+
+<script>
+let agentVisible = false;
+
+function toggleAgent() {
+  agentVisible = !agentVisible;
+  document.getElementById("agentPanel").style.display =
+    agentVisible ? "block" : "none";
+}
+
+async function scan() {
+  const url = document.getElementById("url").value;
+
+  try {
+    const res = await fetch("/api/scan", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ url })
+    });
+
+    if (!res.ok) {
+      throw new Error("Error en el servidor: " + res.status);
+    }
+
+    const data = await res.json();
+
+    // 🧾 RESULTADO
+    document.getElementById("result").innerHTML = `
+      <h2>Nivel de Riesgo: ${data.riesgo}</h2>
+      <h3>Score: ${data.score}/100</h3>
+      <ul>${(data.resultados || []).map(r => `<li>${r}</li>`).join("")}</ul>
+    `;
+
+    // 🤖 BOTÓN
+    const btn = document.getElementById("agentBtn");
+    btn.style.display = "flex";
+
+    if (data.score > 30) {
+      btn.classList.add("warning");
+      btn.innerText = "⚠️";
+    } else {
+      btn.classList.remove("warning");
+      btn.innerText = "🤖";
+    }
+
+    // 🧠 AGENTE
+    let texto = "";
+
+    texto += "🔎 Diagnóstico:\n";
+    texto += `Riesgo ${data.riesgo} detectado\n\n`;
+
+    texto += "⚠️ Riesgos:\n";
+    texto += (data.resultados || []).map(r => "- " + r).join("\n");
+
+    texto += "\n\n🛡️ Recomendación:\n";
+
+    if (data.score > 70) {
+      texto += "NO interactuar con este sitio.\n";
+    } else if (data.score > 40) {
+      texto += "Evitar ingresar datos sensibles.\n";
+    } else {
+      texto += "Precaución general.\n";
+    }
+
+    texto += `\n📊 Score: ${data.score}/100`;
+
+    document.getElementById("agentText").innerText = texto;
+
+    document.getElementById("agentPanel").style.display = "block";
+    agentVisible = true;
+
+  } catch (error) {
+    document.getElementById("result").innerHTML =
+      `<h3 style="color:red;">Error: ${error.message}</h3>`;
+    console.error(error);
+  }
+}
+</script>
+
+</body>
+</html>
