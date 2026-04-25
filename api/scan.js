@@ -1,5 +1,15 @@
 import entidades from "../entidades.json";
 
+// 🔥 FETCH CON TIMEOUT
+const fetchSafe = async (url, options = {}, timeout = 4000) => {
+  return Promise.race([
+    fetch(url, options),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("Timeout")), timeout)
+    )
+  ]);
+};
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Método no permitido" });
@@ -36,7 +46,7 @@ export default async function handler(req, res) {
   try {
     // 🟢 GOOGLE
     try {
-      const safeRes = await fetch(
+      const safeRes = await fetchSafe(
         `https://safebrowsing.googleapis.com/v4/threatMatches:find?key=${process.env.GOOGLE_API_KEY}`,
         {
           method: "POST",
@@ -61,7 +71,7 @@ export default async function handler(req, res) {
 
     // 🟡 VIRUSTOTAL
     try {
-      await fetch("https://www.virustotal.com/api/v3/urls", {
+      await fetchSafe("https://www.virustotal.com/api/v3/urls", {
         method: "POST",
         headers: {
           "x-apikey": process.env.VT_API_KEY,
@@ -75,7 +85,7 @@ export default async function handler(req, res) {
 
     // 🟡 WHOIS
     try {
-      const whoisRes = await fetch(
+      const whoisRes = await fetchSafe(
         `https://api.api-ninjas.com/v1/whois?domain=${domain}`,
         { headers: { "X-Api-Key": process.env.WHOIS_KEY } }
       );
@@ -92,7 +102,7 @@ export default async function handler(req, res) {
 
     // 🟣 OTX
     try {
-      const otxRes = await fetch(
+      const otxRes = await fetchSafe(
         `https://otx.alienvault.com/api/v1/indicators/domain/${domain}/general`,
         { headers: { "X-OTX-API-KEY": process.env.OTX_KEY } }
       );
@@ -106,7 +116,7 @@ export default async function handler(req, res) {
     // 🔵 IP
     let ip = null;
     try {
-      ip = await fetch(`https://dns.google/resolve?name=${domain}`)
+      ip = await fetchSafe(`https://dns.google/resolve?name=${domain}`)
         .then(r => r.json().catch(() => ({})))
         .then(d => (d.Answer ? d.Answer[0].data : null));
     } catch {}
@@ -114,7 +124,7 @@ export default async function handler(req, res) {
     // 🔵 ABUSE
     if (ip) {
       try {
-        const abuseRes = await fetch(
+        const abuseRes = await fetchSafe(
           `https://api.abuseipdb.com/api/v2/check?ipAddress=${ip}&maxAgeInDays=90`,
           {
             headers: {
@@ -134,7 +144,7 @@ export default async function handler(req, res) {
     // 🟦 SHODAN
     if (ip) {
       try {
-        const shodanRes = await fetch(`https://internetdb.shodan.io/${ip}`);
+        const shodanRes = await fetchSafe(`https://internetdb.shodan.io/${ip}`);
         const shodanData = await shodanRes.json().catch(() => ({}));
         if (shodanData.ports?.length > 0) {
           resultados.push(`Puertos abiertos: ${shodanData.ports.join(", ")}`);
@@ -145,7 +155,7 @@ export default async function handler(req, res) {
 
     // 🔴 URLSCAN
     try {
-      const urlscanRes = await fetch("https://urlscan.io/api/v1/scan/", {
+      const urlscanRes = await fetchSafe("https://urlscan.io/api/v1/scan/", {
         method: "POST",
         headers: {
           "API-Key": process.env.URLSCAN_KEY,
@@ -162,7 +172,7 @@ export default async function handler(req, res) {
     // 🌍 GEO IP
     if (ip) {
       try {
-        const geoRes = await fetch(`http://ip-api.com/json/${ip}`);
+        const geoRes = await fetchSafe(`http://ip-api.com/json/${ip}`);
         const geoData = await geoRes.json().catch(() => ({}));
         if (geoData.country) {
           resultados.push(`Servidor en: ${geoData.country}`);
@@ -172,7 +182,7 @@ export default async function handler(req, res) {
 
     // 🌐 DNS
     try {
-      const dnsRes = await fetch(`https://dns.google/resolve?name=${domain}&type=NS`);
+      const dnsRes = await fetchSafe(`https://dns.google/resolve?name=${domain}&type=NS`);
       const dnsData = await dnsRes.json().catch(() => ({}));
       if (!dnsData.Answer) {
         resultados.push("DNS sospechoso");
@@ -180,10 +190,10 @@ export default async function handler(req, res) {
       }
     } catch {}
 
-    // 🧠 HTML (ARREGLADO)
+    // 🧠 HTML
     let html = "";
     try {
-      const htmlRes = await fetch(url);
+      const htmlRes = await fetchSafe(url);
       html = await htmlRes.text();
     } catch {
       resultados.push("No se pudo analizar HTML");
