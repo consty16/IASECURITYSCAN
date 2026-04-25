@@ -201,46 +201,7 @@ export default async function handler(req, res) {
 
     } catch {}
 
-    // 🤖 GEMINI IA (DEBUG REAL)
-try {
-  const aiRes = await fetch(
-    `const aiRes = await fetch(
-  const aiRes = await fetch(
-  `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash-latest:generateContent?key=${process.env.GEMINI_API}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: `Sos experto en ciberseguridad. Decime si esta URL es phishing o no y por qué: ${url}`
-          }]
-        }]
-      })
-    }
-  );
-
-  // 🔴 CLAVE TOTAL
-  if (!aiRes.ok) {
-    const errorText = await aiRes.text();
-    resultados.push("❌ Gemini error: " + errorText);
-  } else {
-    const aiData = await aiRes.json();
-
-    const aiText = aiData?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-    if (aiText) {
-      resultados.push("🤖 IA: " + aiText.slice(0, 200));
-      score += 10;
-    } else {
-      resultados.push("⚠️ Gemini respondió vacío");
-    }
-  }
-
-} catch (e) {
-  resultados.push("❌ Gemini crash");
-}
-
+    
     // 💣 HEURÍSTICAS (TU BLOQUE ORIGINAL)
     if (!url.startsWith("https")) {
       resultados.push("Sitio sin HTTPS");
