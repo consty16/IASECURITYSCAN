@@ -204,7 +204,9 @@ export default async function handler(req, res) {
     // 🤖 GEMINI IA (DEBUG REAL)
 try {
   const aiRes = await fetch(
-    `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API}`,
+    `const aiRes = await fetch(
+  const aiRes = await fetch(
+  `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash-latest:generateContent?key=${process.env.GEMINI_API}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
