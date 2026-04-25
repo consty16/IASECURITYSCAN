@@ -22,7 +22,6 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "URL inválida" });
   }
 
-  // ✅ ENTIDAD
   const entidad = entidades.find(
     e => domain === e.dominio || domain.endsWith("." + e.dominio)
   );
@@ -54,7 +53,7 @@ export default async function handler(req, res) {
           })
         }
       );
-      const safeData = await safeRes.json();
+      const safeData = await safeRes.json().catch(() => ({}));
       if (safeData.matches) {
         resultados.push("Phishing/Malware detectado (Google)");
         score += 40;
@@ -81,7 +80,7 @@ export default async function handler(req, res) {
         `https://api.api-ninjas.com/v1/whois?domain=${domain}`,
         { headers: { "X-Api-Key": process.env.WHOIS_KEY } }
       );
-      const whois = await whoisRes.json();
+      const whois = await whoisRes.json().catch(() => ({}));
       if (whois.creation_date) {
         const created = new Date(whois.creation_date);
         const ageDays = (Date.now() - created) / (1000 * 60 * 60 * 24);
@@ -98,7 +97,7 @@ export default async function handler(req, res) {
         `https://otx.alienvault.com/api/v1/indicators/domain/${domain}/general`,
         { headers: { "X-OTX-API-KEY": process.env.OTX_KEY } }
       );
-      const otxData = await otxRes.json();
+      const otxData = await otxRes.json().catch(() => ({}));
       if (otxData.pulse_info?.count > 0) {
         resultados.push("Reportado en inteligencia de amenazas (OTX)");
         score += 30;
@@ -109,7 +108,7 @@ export default async function handler(req, res) {
     let ip = null;
     try {
       ip = await fetch(`https://dns.google/resolve?name=${domain}`)
-        .then(r => r.json())
+        .then(r => r.json().catch(() => ({})))
         .then(d => (d.Answer ? d.Answer[0].data : null));
     } catch {}
 
@@ -125,7 +124,7 @@ export default async function handler(req, res) {
             }
           }
         );
-        const abuseData = await abuseRes.json();
+        const abuseData = await abuseRes.json().catch(() => ({}));
         if (abuseData.data?.abuseConfidenceScore > 50) {
           resultados.push("IP reportada por actividad maliciosa");
           score += 25;
@@ -137,7 +136,7 @@ export default async function handler(req, res) {
     if (ip) {
       try {
         const shodanRes = await fetch(`https://internetdb.shodan.io/${ip}`);
-        const shodanData = await shodanRes.json();
+        const shodanData = await shodanRes.json().catch(() => ({}));
         if (shodanData.ports?.length > 0) {
           resultados.push(`Puertos abiertos: ${shodanData.ports.join(", ")}`);
           score += 10;
@@ -161,26 +160,27 @@ export default async function handler(req, res) {
       }
     } catch {}
 
-// 🌍 GEO IP
-if (ip) {
-  try {
-    const geoRes = await fetch(`http://ip-api.com/json/${ip}`);
-    const geoData = await geoRes.json();
-    if (geoData.country) {
-      resultados.push(`Servidor en: ${geoData.country}`);
+    // 🌍 GEO IP
+    if (ip) {
+      try {
+        const geoRes = await fetch(`http://ip-api.com/json/${ip}`);
+        const geoData = await geoRes.json().catch(() => ({}));
+        if (geoData.country) {
+          resultados.push(`Servidor en: ${geoData.country}`);
+        }
+      } catch {}
     }
-  } catch {}
-}
 
-// 🌐 DNS AVANZADO
-try {
-  const dnsRes = await fetch(`https://dns.google/resolve?name=${domain}&type=NS`);
-  const dnsData = await dnsRes.json();
-  if (!dnsData.Answer) {
-    resultados.push("DNS sospechoso");
-    score += 15;
-  }
-} catch {}
+    // 🌐 DNS AVANZADO
+    try {
+      const dnsRes = await fetch(`https://dns.google/resolve?name=${domain}&type=NS`);
+      const dnsData = await dnsRes.json().catch(() => ({}));
+      if (!dnsData.Answer) {
+        resultados.push("DNS sospechoso");
+        score += 15;
+      }
+    } catch {}
+
     // 🧠 HTML
     try {
       const html = await fetch(url).then(r => r.text());
@@ -197,7 +197,6 @@ try {
       }
 
       const marcas = ["banco","mercado pago","uala","paypal"];
-
       for (let marca of marcas) {
         if (htmlLower.includes(marca) && !entidad) {
           resultados.push(`🚨 Clon financiero de ${marca}`);
@@ -227,7 +226,6 @@ try {
       score += 30;
     }
 
-    // 🎯 RESULTADO
     let riesgo = "BAJO";
     if (score > 80) riesgo = "CRITICO";
     else if (score > 50) riesgo = "ALTO";
@@ -240,3 +238,4 @@ try {
     res.status(500).json({ error: "Error en el análisis" });
   }
 }
+  
