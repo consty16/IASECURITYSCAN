@@ -211,7 +211,7 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         contents: [{
           parts: [{
-            text: `Analiza si esta URL es phishing o fraude: ${url}`
+           text: `Sos un experto en ciberseguridad. Analizá esta URL y respondé SIEMPRE con un diagnóstico claro (phishing o seguro) y breve explicación: ${url}`
           }]
         }]
       })
