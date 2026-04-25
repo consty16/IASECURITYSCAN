@@ -1,4 +1,6 @@
-import entidades from "../entidades.json";
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
+const entidades = require("../entidades.json");
 
 // 🔥 FETCH CON TIMEOUT
 const fetchSafe = async (url, options = {}, timeout = 4000) => {
