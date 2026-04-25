@@ -7,7 +7,6 @@ export default async function handler(req, res) {
 
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: "URL requerida" });
-
   if (!url.startsWith("http")) {
     return res.status(400).json({ error: "URL inválida" });
   }
@@ -171,7 +170,7 @@ export default async function handler(req, res) {
       } catch {}
     }
 
-    // 🌐 DNS AVANZADO
+    // 🌐 DNS
     try {
       const dnsRes = await fetch(`https://dns.google/resolve?name=${domain}&type=NS`);
       const dnsData = await dnsRes.json().catch(() => ({}));
@@ -181,29 +180,34 @@ export default async function handler(req, res) {
       }
     } catch {}
 
-    // 🧠 HTML
+    // 🧠 HTML (ARREGLADO)
+    let html = "";
     try {
-      const html = await fetch(url).then(r => r.text());
-      const htmlLower = html.toLowerCase();
+      const htmlRes = await fetch(url);
+      html = await htmlRes.text();
+    } catch {
+      resultados.push("No se pudo analizar HTML");
+    }
 
-      if (html.includes("<form") && html.match(/password/i)) {
-        resultados.push("Formulario de login detectado");
-        score += 25;
-      }
+    const htmlLower = html.toLowerCase();
 
-      if (html.match(/usuario|dni|clave|password|token/i)) {
-        resultados.push("Captura de credenciales");
-        score += 40;
-      }
+    if (html.includes("<form") && html.match(/password/i)) {
+      resultados.push("Formulario de login detectado");
+      score += 25;
+    }
 
-      const marcas = ["banco","mercado pago","uala","paypal"];
-      for (let marca of marcas) {
-        if (htmlLower.includes(marca) && !entidad) {
-          resultados.push(`🚨 Clon financiero de ${marca}`);
-          score += 50;
-        }
+    if (html.match(/usuario|dni|clave|password|token/i)) {
+      resultados.push("Captura de credenciales");
+      score += 40;
+    }
+
+    const marcas = ["banco","mercado pago","uala","paypal"];
+    for (let marca of marcas) {
+      if (htmlLower.includes(marca) && !entidad) {
+        resultados.push(`🚨 Clon financiero de ${marca}`);
+        score += 50;
       }
-    } catch {}
+    }
 
     // 💣 HEURÍSTICAS
     if (!url.startsWith("https")) {
@@ -234,8 +238,7 @@ export default async function handler(req, res) {
     res.json({ url, riesgo, score, resultados });
 
   } catch (error) {
-    console.error("ERROR:", error);
-    res.status(500).json({ error: "Error en el análisis" });
+    console.error("ERROR REAL:", error?.message, error?.stack);
+    res.status(500).json({ error: error?.message || "Error en el análisis" });
   }
 }
-  
