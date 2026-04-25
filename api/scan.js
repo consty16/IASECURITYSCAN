@@ -1,3 +1,5 @@
+import entidades from "../entidades.json";
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Método no permitido" });
@@ -5,13 +7,29 @@ export default async function handler(req, res) {
 
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: "URL requerida" });
-
+  if (!url.startsWith("http")) {
+  return res.status(400).json({ error: "URL inválida" });
+}
   let resultados = [];
   let score = 0;
+
   let domain = new URL(url).hostname.toLowerCase();
 
-  try {
+  // ✅ MEJORA ANTI-CLONES (IMPORTANTE)
+  const entidad = entidades.find(e =>
+    domain === e.dominio || domain.endsWith("." + e.dominio)
+  );
 
+  if (entidad) {
+    resultados.push(`✅ Sitio oficial: ${entidad.nombre}`);
+    // opcional PRO:
+    score -= 10; // baja riesgo si es oficial
+  } else {
+    resultados.push("⚠️ No coincide con entidad oficial");
+    score += 20;
+  }
+
+  try {
     // 🟢 GOOGLE SAFE BROWSING
     const safeRes = await fetch(
       `https://safebrowsing.googleapis.com/v4/threatMatches:find?key=${process.env.GOOGLE_API_KEY}`,
@@ -193,7 +211,7 @@ export default async function handler(req, res) {
       ];
 
       for (let marca of marcas) {
-        if (htmlLower.includes(marca) && !domain.includes(marca)) {
+         if (htmlLower.includes(marca) && !entidad){
           resultados.push(`🚨 Clon financiero de ${marca}`);
           score += 50;
         }
