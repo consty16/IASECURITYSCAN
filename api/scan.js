@@ -12,6 +12,9 @@ const fetchSafe = async (url, options = {}, timeout = 4000) => {
   ]);
 };
 
+// 🚪 Puertos que SÍ son sospechosos (80 y 443 son NORMALES, no se penalizan)
+const PUERTOS_SOSPECHOSOS = [22, 23, 3389, 4444, 5900, 8080, 8443, 9200, 27017];
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Método no permitido" });
@@ -33,20 +36,27 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "URL inválida" });
   }
 
-  const entidad = entidades.find(
-    e => domain === e.dominio || domain.endsWith("." + e.dominio)
-  );
+  // ✅ Verificar entidad oficial financiera argentina
+  const entidad = Array.isArray(entidades)
+    ? entidades.find(
+        e => domain === e.dominio || domain.endsWith("." + e.dominio)
+      )
+    : null;
+
+  // Solo penalizar si el dominio PARECE financiero pero no está en la lista
+  const pareceFinanciero = /banco|pago|pay|wallet|tarjeta|credito|fintech|uala|mercado/i.test(domain);
 
   if (entidad) {
-    resultados.push(`✅ Sitio oficial: ${entidad.nombre}`);
+    resultados.push(`✅ Sitio oficial verificado: ${entidad.nombre}`);
     score -= 10;
-  } else {
-    resultados.push("⚠️ No coincide con entidad oficial");
-    score += 20;
+  } else if (pareceFinanciero) {
+    resultados.push("🚨 Parece un sitio financiero pero NO está en la lista oficial");
+    score += 30;
   }
+  // Si no es financiero → no penalizar por no estar en la lista
 
   try {
-    // 🟢 GOOGLE
+    // 🟢 GOOGLE SAFE BROWSING
     try {
       const safeRes = await fetchSafe(
         `https://safebrowsing.googleapis.com/v4/threatMatches:find?key=${process.env.GOOGLE_API_KEY}`,
@@ -65,27 +75,62 @@ export default async function handler(req, res) {
         }
       );
       const safeData = await safeRes.json().catch(() => ({}));
-      if (safeData.matches) {
-        resultados.push("Phishing/Malware detectado (Google)");
+      if (safeData.matches && safeData.matches.length > 0) {
+        resultados.push("🚨 Phishing/Malware detectado por Google Safe Browsing");
         score += 40;
+      } else {
+        resultados.push("✅ Sin amenazas en Google Safe Browsing");
       }
-    } catch {}
+    } catch {
+      resultados.push("⚠️ Google Safe Browsing no disponible");
+    }
 
-    // 🟡 VIRUSTOTAL
+    // 🟡 VIRUSTOTAL — envío + lectura real del resultado
     try {
-      await fetchSafe("https://www.virustotal.com/api/v3/urls", {
-        method: "POST",
-        headers: {
-          "x-apikey": process.env.VT_API_KEY,
-          "Content-Type": "application/x-www-form-urlencoded"
-        },
-        body: new URLSearchParams({ url })
-      });
-      resultados.push("Analizado por VirusTotal");
-      score += 10;
-    } catch {}
+      const vtSubmit = await fetchSafe(
+        "https://www.virustotal.com/api/v3/urls",
+        {
+          method: "POST",
+          headers: {
+            "x-apikey": process.env.VT_API_KEY,
+            "Content-Type": "application/x-www-form-urlencoded"
+          },
+          body: new URLSearchParams({ url })
+        }
+      );
+      const vtSubmitData = await vtSubmit.json().catch(() => ({}));
+      const analysisId = vtSubmitData?.data?.id;
 
-    // 🟡 WHOIS
+      if (analysisId) {
+        await new Promise(r => setTimeout(r, 2000));
+        const vtResult = await fetchSafe(
+          `https://www.virustotal.com/api/v3/analyses/${analysisId}`,
+          { headers: { "x-apikey": process.env.VT_API_KEY } },
+          6000
+        );
+        const vtData = await vtResult.json().catch(() => ({}));
+        const stats = vtData?.data?.attributes?.stats;
+
+        if (stats) {
+          const malicious = stats.malicious || 0;
+          const suspicious = stats.suspicious || 0;
+          if (malicious > 0 || suspicious > 0) {
+            resultados.push(`🚨 VirusTotal: ${malicious} motor(es) lo marcan como malicioso`);
+            score += malicious > 3 ? 40 : 20;
+          } else {
+            resultados.push("✅ VirusTotal: sin detecciones maliciosas");
+          }
+        } else {
+          resultados.push("⏳ VirusTotal: análisis en proceso");
+        }
+      } else {
+        resultados.push("⚠️ VirusTotal: no se pudo enviar la URL");
+      }
+    } catch {
+      resultados.push("⚠️ VirusTotal no disponible");
+    }
+
+    // 🟡 WHOIS — antigüedad del dominio
     try {
       const whoisRes = await fetchSafe(
         `https://api.api-ninjas.com/v1/whois?domain=${domain}`,
@@ -93,16 +138,29 @@ export default async function handler(req, res) {
       );
       const whois = await whoisRes.json().catch(() => ({}));
       if (whois.creation_date) {
-        const created = new Date(whois.creation_date);
-        const ageDays = (Date.now() - created) / (1000 * 60 * 60 * 24);
+        const created = new Date(
+          typeof whois.creation_date === "number"
+            ? whois.creation_date * 1000
+            : whois.creation_date
+        );
+        const ageDays = (Date.now() - created.getTime()) / (1000 * 60 * 60 * 24);
         if (ageDays < 30) {
-          resultados.push("Dominio muy nuevo (alto riesgo)");
+          resultados.push(`🚨 Dominio muy nuevo: ${Math.floor(ageDays)} días de antigüedad`);
           score += 25;
+        } else if (ageDays < 90) {
+          resultados.push(`⚠️ Dominio reciente: ${Math.floor(ageDays)} días`);
+          score += 10;
+        } else {
+          resultados.push(`✅ Dominio con ${Math.floor(ageDays / 365)} año(s) de antigüedad`);
         }
+      } else {
+        resultados.push("⚠️ WHOIS: no se encontró fecha de creación");
       }
-    } catch {}
+    } catch {
+      resultados.push("⚠️ WHOIS no disponible");
+    }
 
-    // 🟣 OTX
+    // 🟣 OTX AlienVault
     try {
       const otxRes = await fetchSafe(
         `https://otx.alienvault.com/api/v1/indicators/domain/${domain}/general`,
@@ -110,147 +168,234 @@ export default async function handler(req, res) {
       );
       const otxData = await otxRes.json().catch(() => ({}));
       if (otxData.pulse_info?.count > 0) {
-        resultados.push("Reportado en inteligencia de amenazas (OTX)");
+        resultados.push(`🚨 Reportado en ${otxData.pulse_info.count} alerta(s) de inteligencia (OTX)`);
         score += 30;
+      } else {
+        resultados.push("✅ Sin reportes en OTX AlienVault");
       }
-    } catch {}
+    } catch {
+      resultados.push("⚠️ OTX no disponible");
+    }
 
-    // 🔵 IP
+    // 🔵 Resolución de IP
     let ip = null;
     try {
-      ip = await fetchSafe(`https://dns.google/resolve?name=${domain}`)
-        .then(r => r.json().catch(() => ({})))
-        .then(d => (d.Answer ? d.Answer[0].data : null));
-    } catch {}
+      const dnsIpRes = await fetchSafe(
+        `https://dns.google/resolve?name=${domain}&type=A`,
+        {},
+        5000
+      );
+      const dnsIpData = await dnsIpRes.json().catch(() => ({}));
+      ip = dnsIpData?.Answer?.find(r => r.type === 1)?.data || null;
+      if (ip) {
+        resultados.push(`🌐 IP resuelta: ${ip}`);
+      } else {
+        resultados.push("⚠️ No se pudo resolver la IP del dominio");
+        score += 10;
+      }
+    } catch {
+      resultados.push("⚠️ Resolución DNS fallida");
+    }
 
-    // 🔵 ABUSE
+    // 🔵 ABUSEIPDB
     if (ip) {
       try {
         const abuseRes = await fetchSafe(
           `https://api.abuseipdb.com/api/v2/check?ipAddress=${ip}&maxAgeInDays=90`,
           {
             headers: {
-              Key: process.env.ABUSE_KEY,
-              Accept: "application/json"
+              "Key": process.env.ABUSE_KEY,
+              "Accept": "application/json"
             }
           }
         );
         const abuseData = await abuseRes.json().catch(() => ({}));
-        if (abuseData.data?.abuseConfidenceScore > 50) {
-          resultados.push("IP reportada por actividad maliciosa");
-          score += 25;
+        const abuseScore = abuseData.data?.abuseConfidenceScore;
+        if (abuseScore !== undefined) {
+          if (abuseScore > 50) {
+            resultados.push(`🚨 IP con ${abuseScore}% de índice de abuso (AbuseIPDB)`);
+            score += 25;
+          } else if (abuseScore > 10) {
+            resultados.push(`⚠️ IP con actividad sospechosa leve: ${abuseScore}%`);
+            score += 10;
+          } else {
+            resultados.push("✅ IP sin reportes de abuso");
+          }
         }
-      } catch {}
+      } catch {
+        resultados.push("⚠️ AbuseIPDB no disponible");
+      }
     }
 
-    // 🟦 SHODAN
+    // 🟦 SHODAN InternetDB — solo puertos realmente sospechosos
     if (ip) {
       try {
         const shodanRes = await fetchSafe(`https://internetdb.shodan.io/${ip}`);
         const shodanData = await shodanRes.json().catch(() => ({}));
+
         if (shodanData.ports?.length > 0) {
-          resultados.push(`Puertos abiertos: ${shodanData.ports.join(", ")}`);
-          score += 10;
+          const portosRiesgosos = shodanData.ports.filter(p =>
+            PUERTOS_SOSPECHOSOS.includes(p)
+          );
+          if (portosRiesgosos.length > 0) {
+            resultados.push(`⚠️ Puertos de riesgo detectados: ${portosRiesgosos.join(", ")}`);
+            score += 15;
+          } else {
+            resultados.push(`✅ Puertos abiertos normales (${shodanData.ports.join(", ")})`);
+          }
+        } else {
+          resultados.push("✅ Sin puertos sospechosos (Shodan)");
         }
-      } catch {}
+
+        if (shodanData.vulns?.length > 0) {
+          resultados.push(`🚨 Vulnerabilidades conocidas: ${shodanData.vulns.join(", ")}`);
+          score += 20;
+        }
+      } catch {
+        resultados.push("⚠️ Shodan no disponible");
+      }
     }
 
     // 🔴 URLSCAN
     try {
-      const urlscanRes = await fetchSafe("https://urlscan.io/api/v1/scan/", {
-        method: "POST",
-        headers: {
-          "API-Key": process.env.URLSCAN_KEY,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ url, visibility: "public" })
-      });
-      if (urlscanRes.ok) {
-        resultados.push("Analizando comportamiento (URLScan)");
-        score += 10;
+      const urlscanRes = await fetchSafe(
+        "https://urlscan.io/api/v1/scan/",
+        {
+          method: "POST",
+          headers: {
+            "API-Key": process.env.URLSCAN_KEY,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ url, visibility: "public" })
+        }
+      );
+      const urlscanData = await urlscanRes.json().catch(() => ({}));
+      if (urlscanRes.ok && urlscanData.uuid) {
+        resultados.push("🔍 Análisis de comportamiento enviado a URLScan");
+      } else {
+        resultados.push("⚠️ URLScan: no se pudo iniciar análisis");
       }
-    } catch {}
+    } catch {
+      resultados.push("⚠️ URLScan no disponible");
+    }
 
-    // 🌍 GEO IP
+    // 🌍 GEO IP — ✅ FIX: https en lugar de http
     if (ip) {
       try {
-        const geoRes = await fetchSafe(`http://ip-api.com/json/${ip}`);
+        const geoRes = await fetchSafe(`https://ip-api.com/json/${ip}`);
         const geoData = await geoRes.json().catch(() => ({}));
         if (geoData.country) {
-          resultados.push(`Servidor en: ${geoData.country}`);
+          resultados.push(`🌍 Servidor en: ${geoData.country} — ${geoData.city || "ciudad desconocida"}`);
+          const paisesRiesgo = ["Russia", "China", "North Korea", "Iran"];
+          if (paisesRiesgo.includes(geoData.country)) {
+            resultados.push("⚠️ País asociado a alto riesgo cibernético");
+            score += 15;
+          }
         }
-      } catch {}
+      } catch {
+        resultados.push("⚠️ Geolocalización no disponible");
+      }
     }
 
-    // 🌐 DNS
+    // 🌐 DNS NS Records — timeout mayor para evitar falsos positivos
     try {
-      const dnsRes = await fetchSafe(`https://dns.google/resolve?name=${domain}&type=NS`);
+      const dnsRes = await fetchSafe(
+        `https://dns.google/resolve?name=${domain}&type=NS`,
+        {},
+        6000
+      );
       const dnsData = await dnsRes.json().catch(() => ({}));
-      if (!dnsData.Answer) {
-        resultados.push("DNS sospechoso");
-        score += 15;
+      if (!dnsData.Answer || dnsData.Answer.length === 0) {
+        resultados.push("⚠️ Sin registros NS encontrados — DNS sospechoso");
+        score += 10;
+      } else {
+        resultados.push("✅ Registros DNS NS válidos");
       }
-    } catch {}
+    } catch {
+      // Timeout en DNS no suma score — puede ser falso positivo
+      resultados.push("⚠️ Verificación DNS NS no disponible (timeout)");
+    }
 
-    // 🧠 HTML
+    // 🧠 ANÁLISIS HTML
     let html = "";
     try {
-      const htmlRes = await fetchSafe(url);
+      const htmlRes = await fetchSafe(url, {}, 5000);
       html = await htmlRes.text();
     } catch {
-      resultados.push("No se pudo analizar HTML");
+      resultados.push("⚠️ No se pudo analizar el HTML del sitio");
     }
 
-    const htmlLower = html.toLowerCase();
+    if (html) {
+      const htmlLower = html.toLowerCase();
 
-    if (html.includes("<form") && html.match(/password/i)) {
-      resultados.push("Formulario de login detectado");
-      score += 25;
-    }
+      if (html.includes("<form") && /password|contraseña/i.test(html)) {
+        resultados.push("⚠️ Formulario de login detectado en el HTML");
+        score += 25;
+      }
 
-    if (html.match(/usuario|dni|clave|password|token/i)) {
-      resultados.push("Captura de credenciales");
-      score += 40;
-    }
+      if (/usuario|dni|clave|password|token/i.test(html)) {
+        resultados.push("🚨 Posible captura de credenciales en el HTML");
+        score += 40;
+      }
 
-    const marcas = ["banco","mercado pago","uala","paypal"];
-    for (let marca of marcas) {
-      if (htmlLower.includes(marca) && !entidad) {
-        resultados.push(`🚨 Clon financiero de ${marca}`);
-        score += 50;
+      const marcas = ["mercado pago", "uala", "paypal", "bbva", "santander", "banco galicia"];
+      for (const marca of marcas) {
+        if (htmlLower.includes(marca) && !entidad) {
+          resultados.push(`🚨 Menciona "${marca}" sin ser sitio oficial verificado`);
+          score += 50;
+        }
+      }
+
+      if (/window\.location|document\.location|meta.*refresh/i.test(html)) {
+        resultados.push("⚠️ Redirección automática detectada en el sitio");
+        score += 15;
       }
     }
 
-    // 💣 HEURÍSTICAS
+    // 💣 HEURÍSTICAS DE URL
     if (!url.startsWith("https")) {
-      resultados.push("Sitio sin HTTPS");
+      resultados.push("⚠️ Sitio sin HTTPS — conexión no cifrada");
       score += 10;
     }
 
-    if (/login|verify|secure|update/i.test(url)) {
-      resultados.push("Patrón típico de phishing");
+    if (/login|verify|secure|update|account|confirm/i.test(url)) {
+      resultados.push("⚠️ URL con palabras clave típicas de phishing");
       score += 15;
     }
 
-    if (url.includes("@") || url.includes("-")) {
-      resultados.push("Dominio sospechoso");
+    if (url.includes("@")) {
+      resultados.push("🚨 URL contiene '@' — técnica de engaño clásica");
+      score += 20;
+    }
+
+    const guiones = (domain.match(/-/g) || []).length;
+    if (guiones > 3) {
+      resultados.push(`⚠️ Dominio con ${guiones} guiones — patrón sospechoso`);
       score += 10;
     }
 
     if (url.match(/\.(apk|exe|zip|rar)$/i)) {
-      resultados.push("Descarga potencialmente peligrosa");
+      resultados.push("🚨 URL apunta a una descarga potencialmente peligrosa");
       score += 30;
     }
 
+    const subdominios = domain.split(".").length - 2;
+    if (subdominios > 2) {
+      resultados.push(`⚠️ Exceso de subdominios (${subdominios}) — técnica de camuflaje`);
+      score += 15;
+    }
+
+    // 🎯 NIVEL DE RIESGO FINAL
+    score = Math.max(0, score); // nunca negativo
     let riesgo = "BAJO";
     if (score > 80) riesgo = "CRITICO";
     else if (score > 50) riesgo = "ALTO";
     else if (score > 20) riesgo = "MEDIO";
 
-    res.json({ url, riesgo, score, resultados });
+    return res.json({ url, riesgo, score, resultados });
 
   } catch (error) {
     console.error("ERROR REAL:", error?.message, error?.stack);
-    res.status(500).json({ error: error?.message || "Error en el análisis" });
+    return res.status(500).json({ error: error?.message || "Error en el análisis" });
   }
 }
