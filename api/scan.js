@@ -62,7 +62,7 @@ export default async function handler(req, res) {
     score -= 10;
   } else if (pareceFinanciero) {
     resultados.push("🚨 Parece un sitio financiero pero NO está en la lista oficial");
-    score += 30;
+    score += 60;
   }
 
   try {
@@ -200,7 +200,7 @@ export default async function handler(req, res) {
         resultados.push(`🌐 IP resuelta: ${ip}`);
       } else {
         resultados.push("⚠️ No se pudo resolver la IP del dominio");
-        score += 10;
+        score += 20;
       }
     } catch {
       resultados.push("⚠️ Resolución DNS fallida");
