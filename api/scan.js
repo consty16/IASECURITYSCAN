@@ -203,30 +203,34 @@ export default async function handler(req, res) {
 
     // 🤖 GEMINI IA
     try {
-      const aiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key=${process.env.Gemini_api}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{
-              parts: [{
-                text: `Analiza si esta URL es phishing o fraude: ${url}`
-              }]
-            }]
-          })
-        }
-      );
+  const aiRes = await fetch(
+    `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{
+          parts: [{
+            text: `Analiza si esta URL es phishing o fraude: ${url}`
+          }]
+        }]
+      })
+    }
+  );
 
-      const aiData = await aiRes.json();
-      const aiText = aiData.candidates?.[0]?.content?.parts?.[0]?.text;
+  const aiData = await aiRes.json();
+  const aiText = aiData.candidates?.[0]?.content?.parts?.[0]?.text;
 
-      if (aiText) {
-        resultados.push("🤖 IA: " + aiText.slice(0, 300));
-        score += 10;
-      }
+  if (aiText) {
+    resultados.push("🤖 IA: " + aiText.slice(0, 300));
+    score += 10;
+  } else {
+    resultados.push("⚠️ Gemini sin respuesta");
+  }
 
-    } catch {}
+} catch (e) {
+  resultados.push("❌ Error Gemini");
+}
 
     // 💣 HEURÍSTICAS (TU BLOQUE ORIGINAL)
     if (!url.startsWith("https")) {
