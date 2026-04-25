@@ -12,8 +12,20 @@ const fetchSafe = async (url, options = {}, timeout = 4000) => {
   ]);
 };
 
-// 🚪 Puertos que SÍ son sospechosos (80 y 443 son NORMALES, no se penalizan)
+// 🚪 Puertos que SÍ son sospechosos (80 y 443 son NORMALES)
 const PUERTOS_SOSPECHOSOS = [22, 23, 3389, 4444, 5900, 8080, 8443, 9200, 27017];
+
+// ✅ FIX WHOIS: normaliza cualquier formato de fecha
+const parsearFechaWhois = (raw) => {
+  if (!raw) return null;
+  // Si es array tomar el primer elemento
+  const valor = Array.isArray(raw) ? raw[0] : raw;
+  // Si es número Unix en segundos
+  if (typeof valor === "number") return new Date(valor * 1000);
+  // Si es string intentar parsear directo
+  const d = new Date(valor);
+  return isNaN(d.getTime()) ? null : d;
+};
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -36,14 +48,13 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "URL inválida" });
   }
 
-  // ✅ Verificar entidad oficial financiera argentina
+  // ✅ Verificar entidad oficial
   const entidad = Array.isArray(entidades)
     ? entidades.find(
         e => domain === e.dominio || domain.endsWith("." + e.dominio)
       )
     : null;
 
-  // Solo penalizar si el dominio PARECE financiero pero no está en la lista
   const pareceFinanciero = /banco|pago|pay|wallet|tarjeta|credito|fintech|uala|mercado/i.test(domain);
 
   if (entidad) {
@@ -53,7 +64,6 @@ export default async function handler(req, res) {
     resultados.push("🚨 Parece un sitio financiero pero NO está en la lista oficial");
     score += 30;
   }
-  // Si no es financiero → no penalizar por no estar en la lista
 
   try {
     // 🟢 GOOGLE SAFE BROWSING
@@ -85,7 +95,7 @@ export default async function handler(req, res) {
       resultados.push("⚠️ Google Safe Browsing no disponible");
     }
 
-    // 🟡 VIRUSTOTAL — envío + lectura real del resultado
+    // 🟡 VIRUSTOTAL — envío + lectura real
     try {
       const vtSubmit = await fetchSafe(
         "https://www.virustotal.com/api/v3/urls",
@@ -130,28 +140,27 @@ export default async function handler(req, res) {
       resultados.push("⚠️ VirusTotal no disponible");
     }
 
-    // 🟡 WHOIS — antigüedad del dominio
+    // 🟡 WHOIS — ✅ FIX NaN: maneja arrays, Unix timestamps y strings
     try {
       const whoisRes = await fetchSafe(
         `https://api.api-ninjas.com/v1/whois?domain=${domain}`,
         { headers: { "X-Api-Key": process.env.WHOIS_KEY } }
       );
       const whois = await whoisRes.json().catch(() => ({}));
-      if (whois.creation_date) {
-        const created = new Date(
-          typeof whois.creation_date === "number"
-            ? whois.creation_date * 1000
-            : whois.creation_date
-        );
+      const created = parsearFechaWhois(whois.creation_date);
+
+      if (created) {
         const ageDays = (Date.now() - created.getTime()) / (1000 * 60 * 60 * 24);
         if (ageDays < 30) {
           resultados.push(`🚨 Dominio muy nuevo: ${Math.floor(ageDays)} días de antigüedad`);
           score += 25;
         } else if (ageDays < 90) {
-          resultados.push(`⚠️ Dominio reciente: ${Math.floor(ageDays)} días`);
+          resultados.push(`⚠️ Dominio reciente: ${Math.floor(ageDays)} días de antigüedad`);
           score += 10;
         } else {
-          resultados.push(`✅ Dominio con ${Math.floor(ageDays / 365)} año(s) de antigüedad`);
+          const años = Math.floor(ageDays / 365);
+          const meses = Math.floor((ageDays % 365) / 30);
+          resultados.push(`✅ Dominio con ${años} año(s) y ${meses} mes(es) de antigüedad`);
         }
       } else {
         resultados.push("⚠️ WHOIS: no se encontró fecha de creación");
@@ -227,18 +236,18 @@ export default async function handler(req, res) {
       }
     }
 
-    // 🟦 SHODAN InternetDB — solo puertos realmente sospechosos
+    // 🟦 SHODAN InternetDB
     if (ip) {
       try {
         const shodanRes = await fetchSafe(`https://internetdb.shodan.io/${ip}`);
         const shodanData = await shodanRes.json().catch(() => ({}));
 
         if (shodanData.ports?.length > 0) {
-          const portosRiesgosos = shodanData.ports.filter(p =>
+          const puertosRiesgosos = shodanData.ports.filter(p =>
             PUERTOS_SOSPECHOSOS.includes(p)
           );
-          if (portosRiesgosos.length > 0) {
-            resultados.push(`⚠️ Puertos de riesgo detectados: ${portosRiesgosos.join(", ")}`);
+          if (puertosRiesgosos.length > 0) {
+            resultados.push(`⚠️ Puertos de riesgo detectados: ${puertosRiesgosos.join(", ")}`);
             score += 15;
           } else {
             resultados.push(`✅ Puertos abiertos normales (${shodanData.ports.join(", ")})`);
@@ -256,9 +265,9 @@ export default async function handler(req, res) {
       }
     }
 
-    // 🔴 URLSCAN
+    // 🔴 URLSCAN — ✅ FIX: envío + polling para leer resultado real
     try {
-      const urlscanRes = await fetchSafe(
+      const urlscanSubmit = await fetchSafe(
         "https://urlscan.io/api/v1/scan/",
         {
           method: "POST",
@@ -269,17 +278,49 @@ export default async function handler(req, res) {
           body: JSON.stringify({ url, visibility: "public" })
         }
       );
-      const urlscanData = await urlscanRes.json().catch(() => ({}));
-      if (urlscanRes.ok && urlscanData.uuid) {
-        resultados.push("🔍 Análisis de comportamiento enviado a URLScan");
+      const urlscanSubmitData = await urlscanSubmit.json().catch(() => ({}));
+      const scanUuid = urlscanSubmitData?.uuid;
+
+      if (scanUuid) {
+        // Esperar que URLScan procese el escaneo
+        await new Promise(r => setTimeout(r, 5000));
+
+        // Leer el resultado real
+        const urlscanResult = await fetchSafe(
+          `https://urlscan.io/api/v1/result/${scanUuid}/`,
+          {},
+          8000
+        );
+        const urlscanData = await urlscanResult.json().catch(() => ({}));
+
+        const veredicto = urlscanData?.verdicts?.overall;
+        const malicioso = veredicto?.malicious;
+        const puntaje = veredicto?.score || 0;
+        const marcasDetectadas = urlscanData?.verdicts?.urlscan?.brands || [];
+
+        if (malicioso) {
+          resultados.push(`🚨 URLScan: sitio marcado como MALICIOSO (score: ${puntaje})`);
+          score += 35;
+        } else if (puntaje > 50) {
+          resultados.push(`⚠️ URLScan: comportamiento sospechoso detectado (score: ${puntaje})`);
+          score += 20;
+        } else {
+          resultados.push(`✅ URLScan: sin comportamiento malicioso detectado`);
+        }
+
+        if (marcasDetectadas.length > 0 && !entidad) {
+          const nombres = marcasDetectadas.map(b => b.name || b).join(", ");
+          resultados.push(`🚨 URLScan detectó imitación de marca: ${nombres}`);
+          score += 30;
+        }
       } else {
-        resultados.push("⚠️ URLScan: no se pudo iniciar análisis");
+        resultados.push("⚠️ URLScan: no se pudo iniciar el análisis");
       }
     } catch {
       resultados.push("⚠️ URLScan no disponible");
     }
 
-    // 🌍 GEO IP — ✅ FIX: https en lugar de http
+    // 🌍 GEO IP
     if (ip) {
       try {
         const geoRes = await fetchSafe(`https://ip-api.com/json/${ip}`);
@@ -297,7 +338,7 @@ export default async function handler(req, res) {
       }
     }
 
-    // 🌐 DNS NS Records — timeout mayor para evitar falsos positivos
+    // 🌐 DNS NS Records
     try {
       const dnsRes = await fetchSafe(
         `https://dns.google/resolve?name=${domain}&type=NS`,
@@ -306,13 +347,12 @@ export default async function handler(req, res) {
       );
       const dnsData = await dnsRes.json().catch(() => ({}));
       if (!dnsData.Answer || dnsData.Answer.length === 0) {
-        resultados.push("⚠️ Sin registros NS encontrados — DNS sospechoso");
-        score += 10;
+        resultados.push("⚠️ Sin registros NS encontrados");
+        // Sin score — puede ser timeout o dominio nuevo
       } else {
         resultados.push("✅ Registros DNS NS válidos");
       }
     } catch {
-      // Timeout en DNS no suma score — puede ser falso positivo
       resultados.push("⚠️ Verificación DNS NS no disponible (timeout)");
     }
 
@@ -346,9 +386,14 @@ export default async function handler(req, res) {
         }
       }
 
+      // Redirección solo suma score si hay otras señales de riesgo
       if (/window\.location|document\.location|meta.*refresh/i.test(html)) {
-        resultados.push("⚠️ Redirección automática detectada en el sitio");
-        score += 15;
+        if (score > 20) {
+          resultados.push("⚠️ Redirección automática detectada (combinada con otras señales)");
+          score += 10;
+        } else {
+          resultados.push("ℹ️ Redirección automática detectada (normal en sitios legítimos)");
+        }
       }
     }
 
@@ -386,7 +431,7 @@ export default async function handler(req, res) {
     }
 
     // 🎯 NIVEL DE RIESGO FINAL
-    score = Math.max(0, score); // nunca negativo
+    score = Math.max(0, score);
     let riesgo = "BAJO";
     if (score > 80) riesgo = "CRITICO";
     else if (score > 50) riesgo = "ALTO";
