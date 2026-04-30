@@ -301,7 +301,7 @@ export default async function handler(req, res) {
       const scanUuid = urlscanSubmitData?.uuid;
 
       if (scanUuid) {
-        await new Promise(r => setTimeout(r, 5000));
+        await new Promise(r => setTimeout(r, 3000));
         const urlscanResult = await fetchSafe(
           `https://urlscan.io/api/v1/result/${scanUuid}/`,
           {},
