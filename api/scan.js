@@ -74,8 +74,7 @@ export default async function handler(req, res) {
       )
     : null;
 
-  const pareceFinanciero = /banco|pago|pay|wallet|tarjeta|credito|fintech|uala|mercado/i.test(domain);
-
+  const pareceFinanciero = /banco|pago|pay|wallet|tarjeta|credito|fintech|uala|mercado|anses|arca|afip|renaper|pami|jubilacion|beneficio|cobro/i.test(domain);
   if (entidad) {
     resultados.push(`✅ Sitio oficial verificado: ${entidad.nombre}`);
     score -= 10;
