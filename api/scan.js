@@ -305,7 +305,7 @@ export default async function handler(req, res) {
         const urlscanResult = await fetchSafe(
           `https://urlscan.io/api/v1/result/${scanUuid}/`,
           {},
-          8000
+          6000
         );
         const urlscanData = await urlscanResult.json().catch(() => ({}));
         const veredicto = urlscanData?.verdicts?.overall;
