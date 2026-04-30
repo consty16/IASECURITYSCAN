@@ -49,13 +49,6 @@ export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Método no permitido" });
   }
-
-  // 🔐 API KEY — verificar clave secreta
-  const apiKey = req.headers["x-api-key"];
-  if (apiKey !== process.env.MY_API_KEY) {
-    return res.status(401).json({ error: "No autorizado" });
-  }
-
   // ─── TODO LO DE ABAJO ES EXACTAMENTE IGUAL, SIN CAMBIOS ───
 
   const { url } = req.body;
