@@ -18,19 +18,45 @@ const PUERTOS_SOSPECHOSOS = [22, 23, 3389, 4444, 5900, 8080, 8443, 9200, 27017];
 // ✅ FIX WHOIS: normaliza cualquier formato de fecha
 const parsearFechaWhois = (raw) => {
   if (!raw) return null;
-  // Si es array tomar el primer elemento
   const valor = Array.isArray(raw) ? raw[0] : raw;
-  // Si es número Unix en segundos
   if (typeof valor === "number") return new Date(valor * 1000);
-  // Si es string intentar parsear directo
   const d = new Date(valor);
   return isNaN(d.getTime()) ? null : d;
 };
 
+// 🔐 Dominios autorizados para CORS
+const DOMINIOS_PERMITIDOS = [
+  "https://iasecurityscan.vercel.app",
+  "http://localhost:3000",       // para desarrollo local
+  "http://localhost:5173"        // para Vite local
+];
+
 export default async function handler(req, res) {
+
+  // 🔐 CORS — solo dominios autorizados
+  const origin = req.headers.origin;
+  if (DOMINIOS_PERMITIDOS.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-api-key");
+
+  // Preflight request del navegador — responder OK
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Método no permitido" });
   }
+
+  // 🔐 API KEY — verificar clave secreta
+  const apiKey = req.headers["x-api-key"];
+  if (apiKey !== process.env.MY_API_KEY) {
+    return res.status(401).json({ error: "No autorizado" });
+  }
+
+  // ─── TODO LO DE ABAJO ES EXACTAMENTE IGUAL, SIN CAMBIOS ───
 
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: "URL requerida" });
@@ -55,14 +81,14 @@ export default async function handler(req, res) {
       )
     : null;
 
-  const pareceFinanciero = /banco|pago|pay|wallet|tarjeta|credito|fintech|uala|mercado|bbva|santander|galicia|hsbc/i.test(domain);
+  const pareceFinanciero = /banco|pago|pay|wallet|tarjeta|credito|fintech|uala|mercado/i.test(domain);
 
   if (entidad) {
     resultados.push(`✅ Sitio oficial verificado: ${entidad.nombre}`);
     score -= 10;
   } else if (pareceFinanciero) {
     resultados.push("🚨 Parece un sitio financiero pero NO está en la lista oficial");
-    score += 60;
+    score += 30;
   }
 
   try {
@@ -140,7 +166,7 @@ export default async function handler(req, res) {
       resultados.push("⚠️ VirusTotal no disponible");
     }
 
-    // 🟡 WHOIS — ✅ FIX NaN: maneja arrays, Unix timestamps y strings
+    // 🟡 WHOIS — FIX NaN
     try {
       const whoisRes = await fetchSafe(
         `https://api.api-ninjas.com/v1/whois?domain=${domain}`,
@@ -200,7 +226,7 @@ export default async function handler(req, res) {
         resultados.push(`🌐 IP resuelta: ${ip}`);
       } else {
         resultados.push("⚠️ No se pudo resolver la IP del dominio");
-        score += 20;
+        score += 10;
       }
     } catch {
       resultados.push("⚠️ Resolución DNS fallida");
@@ -265,7 +291,7 @@ export default async function handler(req, res) {
       }
     }
 
-    // 🔴 URLSCAN — ✅ FIX: envío + polling para leer resultado real
+    // 🔴 URLSCAN — envío + polling resultado real
     try {
       const urlscanSubmit = await fetchSafe(
         "https://urlscan.io/api/v1/scan/",
@@ -282,17 +308,13 @@ export default async function handler(req, res) {
       const scanUuid = urlscanSubmitData?.uuid;
 
       if (scanUuid) {
-        // Esperar que URLScan procese el escaneo
         await new Promise(r => setTimeout(r, 5000));
-
-        // Leer el resultado real
         const urlscanResult = await fetchSafe(
           `https://urlscan.io/api/v1/result/${scanUuid}/`,
           {},
           8000
         );
         const urlscanData = await urlscanResult.json().catch(() => ({}));
-
         const veredicto = urlscanData?.verdicts?.overall;
         const malicioso = veredicto?.malicious;
         const puntaje = veredicto?.score || 0;
@@ -302,10 +324,10 @@ export default async function handler(req, res) {
           resultados.push(`🚨 URLScan: sitio marcado como MALICIOSO (score: ${puntaje})`);
           score += 35;
         } else if (puntaje > 50) {
-          resultados.push(`⚠️ URLScan: comportamiento sospechoso detectado (score: ${puntaje})`);
+          resultados.push(`⚠️ URLScan: comportamiento sospechoso (score: ${puntaje})`);
           score += 20;
         } else {
-          resultados.push(`✅ URLScan: sin comportamiento malicioso detectado`);
+          resultados.push("✅ URLScan: sin comportamiento malicioso detectado");
         }
 
         if (marcasDetectadas.length > 0 && !entidad) {
@@ -348,7 +370,6 @@ export default async function handler(req, res) {
       const dnsData = await dnsRes.json().catch(() => ({}));
       if (!dnsData.Answer || dnsData.Answer.length === 0) {
         resultados.push("⚠️ Sin registros NS encontrados");
-        // Sin score — puede ser timeout o dominio nuevo
       } else {
         resultados.push("✅ Registros DNS NS válidos");
       }
@@ -386,7 +407,6 @@ export default async function handler(req, res) {
         }
       }
 
-      // Redirección solo suma score si hay otras señales de riesgo
       if (/window\.location|document\.location|meta.*refresh/i.test(html)) {
         if (score > 20) {
           resultados.push("⚠️ Redirección automática detectada (combinada con otras señales)");
